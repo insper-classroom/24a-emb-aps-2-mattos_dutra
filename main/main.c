@@ -1,66 +1,44 @@
 #include <FreeRTOS.h>
 #include <task.h>
-#include <semphr.h>
 #include <queue.h>
 #include "pico/stdlib.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 
-// Definição dos pinos dos botões
-const uint SocoForte = 18;
-const uint SocoFraco = 19;
-const uint ChuteForte = 20;
-const uint ChuteFraco = 21;
+typedef struct {
+    char states[8];
+} ButtonStates;
 
-// Configuração inicial da UART
+const uint pins[] = {18, 19, 20, 21, 12, 10, 13, 11};
+
 void setup_uart() {
     uart_init(uart0, 115200);
     gpio_set_function(0, GPIO_FUNC_UART);  // TX
     gpio_set_function(1, GPIO_FUNC_UART);  // RX
 }
 
-// Task para verificar os botões e enviar teclas
 void button_task(void *params) {
-    gpio_init(SocoForte);
-    gpio_set_dir(SocoForte, GPIO_IN);
-    gpio_pull_up(SocoForte);
+    for (int i = 0; i < 8; i++) {
+        gpio_init(pins[i]);
+        gpio_set_dir(pins[i], GPIO_IN);
+        gpio_pull_up(pins[i]);
+    }
 
-    gpio_init(SocoFraco);
-    gpio_set_dir(SocoFraco, GPIO_IN);
-    gpio_pull_up(SocoFraco);
-
-    gpio_init(ChuteForte);
-    gpio_set_dir(ChuteForte, GPIO_IN);
-    gpio_pull_up(ChuteForte);
-
-    gpio_init(ChuteFraco);
-    gpio_set_dir(ChuteFraco, GPIO_IN);
-    gpio_pull_up(ChuteFraco);
-
+    ButtonStates states;
     while (true) {
-        if (gpio_get(SocoForte) == 0) {
-            uart_putc(uart0, 'X');  // Soco Forte
+        for (int i = 0; i < 8; i++) {
+            states.states[i] = !gpio_get(pins[i]);  // 0 if released, 1 if pressed
         }
-        if (gpio_get(SocoFraco) == 0) {
-            uart_putc(uart0, 'Y');  // Soco Fraco
-        }
-        if (gpio_get(ChuteForte) == 0) {
-            uart_putc(uart0, 'A');  // Chute Forte
-        }
-        if (gpio_get(ChuteFraco) == 0) {
-            uart_putc(uart0, 'B');  // Chute Fraco
-        }
-        vTaskDelay(pdMS_TO_TICKS(100));  // Debouncing
+
+        uart_write_blocking(uart0, (const uint8_t*)&states, sizeof(states));
+        vTaskDelay(pdMS_TO_TICKS(50)); // Short delay to manage sending rate
     }
 }
 
 int main() {
     stdio_init_all();
     setup_uart();
-    
     xTaskCreate(button_task, "Button Task", 256, NULL, 1, NULL);
-
     vTaskStartScheduler();
-
-    while (true);  // Loop infinito
+    while (true);
 }
