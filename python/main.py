@@ -24,26 +24,24 @@ print("Iniciando a leitura dos estados dos botões e volume...")
 
 try:
     while True:
-        header = ser.read(1)  # Lê o cabeçalho
-        if header and header[0] == 0xFF:  # Confirma que é o cabeçalho esperado
-            button_states = ser.read(8)  # Lê 8 bytes dos estados dos botões
-            separator = ser.read(1)  # Lê o separador
+        header = ser.read(1)
+        if header and header[0] == 0xFF:
+            button_states = ser.read(8)
+            separator = ser.read(1)
             if separator and separator[0] == 0xFE:
-                volume_byte = ser.read(1)  # Lê o byte do volume
+                volume_byte = ser.read(1)
                 if volume_byte:
-                    new_volume = volume_byte[0]  # Converte byte para inteiro diretamente
+                    new_volume = volume_byte[0]
+                    if new_volume != last_volume and new_volume != 0:
+                        mixer.setvolume(new_volume-5)
+                        print(f"Volume ajustado para: {new_volume-5}%")
+                        last_volume = new_volume-5
 
-                    if abs(new_volume - last_volume) > 1:
-                        mixer.setvolume(new_volume)
-                        print(f"Volume: {new_volume}%")
-                        last_volume = new_volume
-
-            # Interpreta os bytes dos estados dos botões
             for i, state in enumerate(button_states):
                 if state == 1:
-                    device.emit(buttons[i], 1)  # Pressiona o botão
+                    device.emit(buttons[i], 1)
                 else:
-                    device.emit(buttons[i], 0)  # Solta o botão
+                    device.emit(buttons[i], 0)
 
 except KeyboardInterrupt:
     print("Program terminated by user")

@@ -7,7 +7,7 @@
 #include "hardware/adc.h"
 #include <stdio.h>
 #include <stdbool.h>
-
+#include <stdlib.h>
 
 // Definir o número da UART e os pinos
 #define UART_ID uart1
@@ -15,6 +15,11 @@
 #define UART_TX_PIN 4
 #define UART_RX_PIN 5
 #define POT_PIN 27
+
+#define MOVING_AVERAGE_SIZE 10
+uint16_t readings[MOVING_AVERAGE_SIZE] = {0};
+uint8_t index = 0;
+uint32_t total = 0;
 
 typedef struct {
     char button_states[8];
@@ -46,18 +51,40 @@ void setup_adc() {
 
 volatile bool volume_ready = false;
 
+#define VOLUME_CHANGE_THRESHOLD 1  // Threshold para alteração de volume considerada significativa
+#define VOLUME_RESET_THRESHOLD 10  // Número de leituras consecutivas próximas a zero para resetar o volume
+
 void adc_task(void *params) {
-    ControlData control_data;
+    static uint8_t last_sent_volume = 255; // Valor inicial para forçar o envio na primeira leitura
+    static int zero_readings_count = 0;    // Contador para leituras consecutivas próximas a zero
+    ControlData control_data = {0};
+
     while (true) {
         uint16_t raw = adc_read();
-        control_data.volume = raw * 100 / 4095;
-        if (!volume_ready) {
+        uint8_t new_volume = raw * 100 / 4095; // Converte a leitura do ADC para uma escala de 0 a 100
+
+        if (abs(new_volume - last_sent_volume) >= VOLUME_CHANGE_THRESHOLD) {
+            control_data.volume = new_volume;
+            last_sent_volume = new_volume; // Atualiza o último volume enviado
+            zero_readings_count = 0;       // Reseta o contador de leituras de zero
             xQueueSend(xQueue, &control_data, portMAX_DELAY);
-            volume_ready = true;
+        } else if (new_volume == 0) {
+            zero_readings_count++;
+            if (zero_readings_count >= VOLUME_RESET_THRESHOLD && last_sent_volume != 0) {
+                control_data.volume = new_volume;
+                last_sent_volume = new_volume;
+                zero_readings_count = 0;   // Reseta o contador de leituras de zero
+                xQueueSend(xQueue, &control_data, portMAX_DELAY);
+            }
+        } else {
+            zero_readings_count = 0;       // Reseta o contador se o volume não é zero
         }
-        vTaskDelay(pdMS_TO_TICKS(50));
+
+        vTaskDelay(pdMS_TO_TICKS(50));  // Delay para limitar a taxa de atualização
     }
 }
+
+
 
 void button_task(void *params) {
     ControlData control_data;
