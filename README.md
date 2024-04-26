@@ -1,3 +1,7 @@
+# Diagrama de Blocos
+
+![alt text](./diagrama.jpeg)
+
 # HC06 examplo
 
 Conectar HC06 no 5V e gnd, pino TX no `GP5` e pino RX no `GP4`. Também é necessário conectar o pino `STATE` do bluetooth no pino `GP3`.
