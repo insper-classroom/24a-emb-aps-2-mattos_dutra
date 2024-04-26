@@ -59,24 +59,32 @@ void setup_adc() {
 }
 
 void control_task(void *params) {
+    static bool ledState = false;  // Estado inicial do LED
+
     while (true) {
         if (!gpio_get(START_STOP_PIN)) {  // Verifica se o botão foi pressionado (ativo baixo)
-            if (xSemaphoreTake(system_running_semaphore, (TickType_t)10) == pdTRUE) {
-                // Inverter o estado do semáforo
-                if (uxSemaphoreGetCount(system_running_semaphore) == 0) {
-                    xSemaphoreGive(system_running_semaphore);
-                    gpio_put(LED_PIN, 1);
-                } else {
-                    xSemaphoreTake(system_running_semaphore, (TickType_t)10);
-                    gpio_put(LED_PIN, 0);
-                }
-            }
-            while (!gpio_get(START_STOP_PIN)); // Debounce - espera soltar o botão
+            // Espera até que o botão seja liberado (debounce)
+            while (!gpio_get(START_STOP_PIN));
             vTaskDelay(pdMS_TO_TICKS(200));    // Pequeno delay após debounce
+
+            // Alterna o estado do LED
+            ledState = !ledState;
+            gpio_put(LED_PIN, ledState);
+
+            if (ledState) {
+                // Se o LED está aceso, significa que o sistema deve estar rodando, então libere o semáforo
+                xSemaphoreGive(system_running_semaphore);
+            } else {
+                // Se o LED está apagado, o sistema deve parar, então pegue o semáforo para si
+                xSemaphoreTake(system_running_semaphore, portMAX_DELAY);
+            }
         }
-        vTaskDelay(pdMS_TO_TICKS(100));       // Verifica o botão a cada 100ms
+        vTaskDelay(pdMS_TO_TICKS(100));  // Verifica o botão a cada 100ms
     }
 }
+
+
+
 
 void adc_task(void *params) {
     static uint8_t last_sent_volume = 255;
@@ -84,7 +92,7 @@ void adc_task(void *params) {
     ControlData control_data = {0};
 
     while (true) {
-        if (uxSemaphoreGetCount(system_running_semaphore) > 0) {
+        if (xSemaphoreTake(system_running_semaphore, 0) == pdTRUE) {
             uint16_t raw = adc_read();
             uint8_t new_volume = raw * 100 / 4095;
 
@@ -104,6 +112,7 @@ void adc_task(void *params) {
             } else {
                 zero_readings_count = 0;
             }
+            xSemaphoreGive(system_running_semaphore);
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
@@ -122,7 +131,7 @@ void button_task(void *params) {
     uint8_t last_state[9] = {0};
 
     while (true) {
-        if (uxSemaphoreGetCount(system_running_semaphore) > 0) {
+        if (xSemaphoreTake(system_running_semaphore, 0) == pdTRUE) {
             for (int i = 0; i < 9; i++) {
                 uint8_t current_state = gpio_get(pins[i]) ? 0 : 1;
                 if (current_state != last_state[i]) {
@@ -133,6 +142,7 @@ void button_task(void *params) {
                 }
             }
             xQueueSend(xQueue, &control_data, portMAX_DELAY);
+            xSemaphoreGive(system_running_semaphore);
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -168,7 +178,6 @@ int main() {
     setup_gpio();
 
     system_running_semaphore = xSemaphoreCreateBinary();
-    xSemaphoreGive(system_running_semaphore);  // Start as running
 
     xQueue = xQueueCreate(10, sizeof(ControlData));
 
