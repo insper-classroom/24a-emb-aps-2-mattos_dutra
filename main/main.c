@@ -15,11 +15,31 @@
 #define UART_TX_PIN 4
 #define UART_RX_PIN 5
 #define POT_PIN 27
+#define START_STOP_PIN 7
+#define LED_PIN 9
 
 #define MOVING_AVERAGE_SIZE 10
 uint16_t readings[MOVING_AVERAGE_SIZE] = {0};
 uint8_t index = 0;
 uint32_t total = 0;
+volatile bool system_running = false;
+
+void setup_gpio() {
+    gpio_init(START_STOP_PIN);
+    gpio_set_dir(START_STOP_PIN, GPIO_IN);
+    gpio_pull_up(START_STOP_PIN);
+}
+
+void control_task(void *params) {
+    while (true) {
+        if (!gpio_get(START_STOP_PIN)) {  // Verifica se o botão foi pressionado (ativo baixo)
+            system_running = !system_running;  // Alterna o estado de running
+            while (!gpio_get(START_STOP_PIN)); // Debounce - espera soltar o botão
+            vTaskDelay(pdMS_TO_TICKS(200));    // Pequeno delay após debounce
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));       // Verifica o botão a cada 100ms
+    }
+}
 
 typedef struct {
     char button_states[8];
@@ -60,26 +80,27 @@ void adc_task(void *params) {
     ControlData control_data = {0};
 
     while (true) {
-        uint16_t raw = adc_read();
-        uint8_t new_volume = raw * 100 / 4095; // Converte a leitura do ADC para uma escala de 0 a 100
+        if (system_running) {
+            uint16_t raw = adc_read();
+            uint8_t new_volume = raw * 100 / 4095; // Converte a leitura do ADC para uma escala de 0 a 100
 
-        if (abs(new_volume - last_sent_volume) >= VOLUME_CHANGE_THRESHOLD) {
-            control_data.volume = new_volume;
-            last_sent_volume = new_volume; // Atualiza o último volume enviado
-            zero_readings_count = 0;       // Reseta o contador de leituras de zero
-            xQueueSend(xQueue, &control_data, portMAX_DELAY);
-        } else if (new_volume == 0) {
-            zero_readings_count++;
-            if (zero_readings_count >= VOLUME_RESET_THRESHOLD && last_sent_volume != 0) {
+            if (abs(new_volume - last_sent_volume) >= VOLUME_CHANGE_THRESHOLD) {
                 control_data.volume = new_volume;
-                last_sent_volume = new_volume;
-                zero_readings_count = 0;   // Reseta o contador de leituras de zero
+                last_sent_volume = new_volume; // Atualiza o último volume enviado
+                zero_readings_count = 0;       // Reseta o contador de leituras de zero
                 xQueueSend(xQueue, &control_data, portMAX_DELAY);
+            } else if (new_volume == 0) {
+                zero_readings_count++;
+                if (zero_readings_count >= VOLUME_RESET_THRESHOLD && last_sent_volume != 0) {
+                    control_data.volume = new_volume;
+                    last_sent_volume = new_volume;
+                    zero_readings_count = 0;   // Reseta o contador de leituras de zero
+                    xQueueSend(xQueue, &control_data, portMAX_DELAY);
+                }
+            } else {
+                zero_readings_count = 0;       // Reseta o contador se o volume não é zero
             }
-        } else {
-            zero_readings_count = 0;       // Reseta o contador se o volume não é zero
         }
-
         vTaskDelay(pdMS_TO_TICKS(50));  // Delay para limitar a taxa de atualização
     }
 }
@@ -98,16 +119,18 @@ void button_task(void *params) {
     }
 
     while (true) {
-        for (int i = 0; i < 8; i++) {
-            uint8_t current_state = gpio_get(pins[i]) ? 0 : 1;
-            if (current_state != last_state[i]) {
-                vTaskDelay(pdMS_TO_TICKS(20)); // Debounce delay
-                current_state = gpio_get(pins[i]) ? 0 : 1; // Read again after delay
+        if (system_running) {
+            for (int i = 0; i < 8; i++) {
+                uint8_t current_state = gpio_get(pins[i]) ? 0 : 1;
+                if (current_state != last_state[i]) {
+                    vTaskDelay(pdMS_TO_TICKS(20)); // Debounce delay
+                    current_state = gpio_get(pins[i]) ? 0 : 1; // Read again after delay
+                }
+                control_data.button_states[i] = current_state;
+                last_state[i] = current_state;
             }
-            control_data.button_states[i] = current_state;
-            last_state[i] = current_state;
+            xQueueSend(xQueue, &control_data, portMAX_DELAY);
         }
-        xQueueSend(xQueue, &control_data, portMAX_DELAY);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
@@ -130,9 +153,11 @@ int main() {
     stdio_init_all();
     setup_uart();
     setup_adc();
+    setup_gpio();
 
     xQueue = xQueueCreate(10, sizeof(ControlData));
 
+    xTaskCreate(control_task, "Control Task", 256, NULL, 1, NULL);
     xTaskCreate(button_task, "Button Task", 256, NULL, 1, NULL);
     xTaskCreate(adc_task, "ADC Task", 256, NULL, 1, NULL);
     xTaskCreate(uart_task, "UART Task", 256, NULL, 1, NULL);
