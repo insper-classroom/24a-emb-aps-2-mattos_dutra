@@ -7,13 +7,13 @@ ser = serial.Serial('/dev/rfcomm0', 9600, timeout=0.1)
 mixer = alsaaudio.Mixer('Speaker', cardindex=1)
 device = uinput.Device([
     uinput.KEY_X, uinput.KEY_Z, uinput.KEY_C, uinput.KEY_V,
-    uinput.KEY_LEFT, uinput.KEY_RIGHT, uinput.KEY_UP, uinput.KEY_DOWN
+    uinput.KEY_LEFT, uinput.KEY_RIGHT, uinput.KEY_UP, uinput.KEY_DOWN, uinput.KEY_ENTER
 ])
 
 # Mapeamento dos botões
 buttons = [
     uinput.KEY_X, uinput.KEY_Z, uinput.KEY_C, uinput.KEY_V,
-    uinput.KEY_LEFT, uinput.KEY_RIGHT, uinput.KEY_UP, uinput.KEY_DOWN
+    uinput.KEY_LEFT, uinput.KEY_RIGHT, uinput.KEY_UP, uinput.KEY_DOWN, uinput.KEY_ENTER
 ]
 
 # Cabeçalho esperado para os dados do volume
@@ -26,7 +26,7 @@ try:
     while True:
         header = ser.read(1)
         if header and header[0] == 0xFF:
-            button_states = ser.read(8)
+            button_states = ser.read(9)
             separator = ser.read(1)
             if separator and separator[0] == 0xFE:
                 volume_byte = ser.read(1)

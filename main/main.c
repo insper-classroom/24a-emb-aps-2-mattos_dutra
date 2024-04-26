@@ -46,15 +46,15 @@ void control_task(void *params) {
 }
 
 typedef struct {
-    char button_states[8];
+    char button_states[9];
     uint8_t volume;
 } ControlData;
 
-const uint pins[] = {18, 19, 20, 21, 12, 10, 13, 11};
+const uint pins[] = {18, 19, 20, 21, 12, 10, 13, 11,26};
 QueueHandle_t xQueue;
 
 void write_package(ControlData *data) {
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 9; i++) {
         uart_putc_raw(UART_ID, data->button_states[i]);
     }
     uart_putc_raw(UART_ID, data->volume);
@@ -113,10 +113,10 @@ void adc_task(void *params) {
 
 void button_task(void *params) {
     ControlData control_data;
-    uint8_t last_state[8] = {0};
+    uint8_t last_state[9] = {0};
     memset(&control_data, 0, sizeof(control_data));
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 9; i++) {
         gpio_init(pins[i]);
         gpio_set_dir(pins[i], GPIO_IN);
         gpio_pull_up(pins[i]);
@@ -124,7 +124,7 @@ void button_task(void *params) {
 
     while (true) {
         if (system_running) {
-            for (int i = 0; i < 8; i++) {
+            for (int i = 0; i < 9; i++) {
                 uint8_t current_state = gpio_get(pins[i]) ? 0 : 1;
                 if (current_state != last_state[i]) {
                     vTaskDelay(pdMS_TO_TICKS(20)); // Debounce delay
@@ -144,7 +144,7 @@ void uart_task(void *params) {
     while (true) {
         if (xQueueReceive(xQueue, &control_data, portMAX_DELAY)) {
             uart_putc_raw(UART_ID, 0xFF);  // Cabeçalho para indicar início de novo pacote
-            for (int i = 0; i < 8; i++) {
+            for (int i = 0; i < 9; i++) {
                 uart_putc_raw(UART_ID, control_data.button_states[i]);
             }
             uart_putc_raw(UART_ID, 0xFE);  // Separador
