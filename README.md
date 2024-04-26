@@ -2,6 +2,15 @@
 
 ![alt text](./diagrama.jpeg)
 
+# Controle Street Fighter
+
+![alt text](./jogo1.jpeg)
+![alt text](./jogo2.jpeg)
+
+# Demonstração do controle funcionando
+
+- https://www.youtube.com/watch?v=EO_8Ws16Ar4&ab_channel=Mattos
+
 # HC06 examplo
 
 Conectar HC06 no 5V e gnd, pino TX no `GP5` e pino RX no `GP4`. Também é necessário conectar o pino `STATE` do bluetooth no pino `GP3`.
