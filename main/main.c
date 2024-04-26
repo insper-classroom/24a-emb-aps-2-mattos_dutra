@@ -1,5 +1,6 @@
 #include <FreeRTOS.h>
 #include <task.h>
+#include <queue.h>
 #include <semphr.h>
 #include "pico/stdlib.h"
 #include "hardware/uart.h"
@@ -9,6 +10,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+// Definir o número da UART e os pinos
 #define UART_ID uart1
 #define BAUD_RATE 9600
 #define UART_TX_PIN 4
@@ -18,6 +20,9 @@
 #define LED_PIN 9
 #define ENTER_PIN 26
 
+#define VOLUME_CHANGE_THRESHOLD 1  // Threshold para alteração de volume considerada significativa
+#define VOLUME_RESET_THRESHOLD 10  // Número de leituras consecutivas próximas a zero para resetar o volume
+
 SemaphoreHandle_t system_running_semaphore;
 
 typedef struct {
@@ -26,7 +31,6 @@ typedef struct {
 } ControlData;
 
 const uint pins[] = {18, 19, 20, 21, 12, 10, 13, 11, ENTER_PIN};
-
 QueueHandle_t xQueue;
 
 void setup_gpio() {
@@ -56,8 +60,9 @@ void setup_adc() {
 
 void control_task(void *params) {
     while (true) {
-        if (!gpio_get(START_STOP_PIN)) {
+        if (!gpio_get(START_STOP_PIN)) {  // Verifica se o botão foi pressionado (ativo baixo)
             if (xSemaphoreTake(system_running_semaphore, (TickType_t)10) == pdTRUE) {
+                // Inverter o estado do semáforo
                 if (uxSemaphoreGetCount(system_running_semaphore) == 0) {
                     xSemaphoreGive(system_running_semaphore);
                     gpio_put(LED_PIN, 1);
@@ -66,18 +71,39 @@ void control_task(void *params) {
                     gpio_put(LED_PIN, 0);
                 }
             }
-            while (!gpio_get(START_STOP_PIN));
-            vTaskDelay(pdMS_TO_TICKS(200));
+            while (!gpio_get(START_STOP_PIN)); // Debounce - espera soltar o botão
+            vTaskDelay(pdMS_TO_TICKS(200));    // Pequeno delay após debounce
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(100));       // Verifica o botão a cada 100ms
     }
 }
 
 void adc_task(void *params) {
+    static uint8_t last_sent_volume = 255;
+    static int zero_readings_count = 0;
     ControlData control_data = {0};
+
     while (true) {
         if (uxSemaphoreGetCount(system_running_semaphore) > 0) {
-            // ADC reading and volume control logic here...
+            uint16_t raw = adc_read();
+            uint8_t new_volume = raw * 100 / 4095;
+
+            if (abs(new_volume - last_sent_volume) >= VOLUME_CHANGE_THRESHOLD) {
+                control_data.volume = new_volume;
+                last_sent_volume = new_volume;
+                zero_readings_count = 0;
+                xQueueSend(xQueue, &control_data, portMAX_DELAY);
+            } else if (new_volume == 0) {
+                zero_readings_count++;
+                if (zero_readings_count >= VOLUME_RESET_THRESHOLD && last_sent_volume != 0) {
+                    control_data.volume = new_volume;
+                    last_sent_volume = new_volume;
+                    zero_readings_count = 0;
+                    xQueueSend(xQueue, &control_data, portMAX_DELAY);
+                }
+            } else {
+                zero_readings_count = 0;
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
@@ -86,15 +112,25 @@ void adc_task(void *params) {
 void button_task(void *params) {
     ControlData control_data;
     memset(&control_data, 0, sizeof(control_data));
-    for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
+
+    for (int i = 0; i < 9; i++) {
         gpio_init(pins[i]);
         gpio_set_dir(pins[i], GPIO_IN);
         gpio_pull_up(pins[i]);
     }
+
+    uint8_t last_state[9] = {0};
+
     while (true) {
         if (uxSemaphoreGetCount(system_running_semaphore) > 0) {
-            for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
-                // Button reading logic here...
+            for (int i = 0; i < 9; i++) {
+                uint8_t current_state = gpio_get(pins[i]) ? 0 : 1;
+                if (current_state != last_state[i]) {
+                    vTaskDelay(pdMS_TO_TICKS(20)); // Debounce delay
+                    current_state = gpio_get(pins[i]) ? 0 : 1; // Read again after delay
+                    control_data.button_states[i] = current_state;
+                    last_state[i] = current_state;
+                }
             }
             xQueueSend(xQueue, &control_data, portMAX_DELAY);
         }
@@ -106,15 +142,22 @@ void uart_task(void *params) {
     ControlData control_data;
     while (true) {
         if (xQueueReceive(xQueue, &control_data, portMAX_DELAY)) {
-            // UART sending logic here...
+            uart_putc_raw(UART_ID, 0xFF);  // Start package header
+            for (int i = 0; i < 9; i++) {
+                uart_putc_raw(UART_ID, control_data.button_states[i]);
+            }
+            uart_putc_raw(UART_ID, 0xFE);  // Separator
+            uart_putc_raw(UART_ID, control_data.volume);
         }
     }
 }
 
 void write_package(ControlData *data) {
+    uart_putc_raw(UART_ID, 0xFF);  // Start package header
     for (int i = 0; i < 9; i++) {
         uart_putc_raw(UART_ID, data->button_states[i]);
     }
+    uart_putc_raw(UART_ID, 0xFE);  // Separator
     uart_putc_raw(UART_ID, data->volume);
 }
 
