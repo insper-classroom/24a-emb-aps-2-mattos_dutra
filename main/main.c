@@ -28,12 +28,16 @@ void setup_gpio() {
     gpio_init(START_STOP_PIN);
     gpio_set_dir(START_STOP_PIN, GPIO_IN);
     gpio_pull_up(START_STOP_PIN);
+
+    gpio_init(LED_PIN);
+    gpio_set_dir(LED_PIN, GPIO_OUT);
 }
 
 void control_task(void *params) {
     while (true) {
         if (!gpio_get(START_STOP_PIN)) {  // Verifica se o botão foi pressionado (ativo baixo)
             system_running = !system_running;  // Alterna o estado de running
+            gpio_put(LED_PIN, system_running);  // Atualiza o estado do LED
             while (!gpio_get(START_STOP_PIN)); // Debounce - espera soltar o botão
             vTaskDelay(pdMS_TO_TICKS(200));    // Pequeno delay após debounce
         }
